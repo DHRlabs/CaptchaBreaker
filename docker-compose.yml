@@ -1,0 +1,14 @@
+services:
+  captchabreaker:
+    build: .
+    image: captchabreaker:latest
+    container_name: captchabreaker
+    ports:
+      - "8977:8977"
+    environment:
+      # Optional: provider key for reCAPTCHA/hCaptcha/Turnstile solves.
+      # Leave empty to use the free offline OCR path only.
+      - CAPTCHABREAKER_PROVIDER=${CAPTCHABREAKER_PROVIDER:-capsolver}
+      - CAPTCHABREAKER_API_KEY=${CAPTCHABREAKER_API_KEY:-}
+      - CAPTCHABREAKER_TIMEOUT=${CAPTCHABREAKER_TIMEOUT:-120}
+    restart: unless-stopped

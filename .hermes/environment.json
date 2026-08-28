@@ -1,0 +1,17 @@
+{
+  "source": "saved",
+  "recipe": {
+    "name": "captchabreaker",
+    "kind": "python",
+    "bootstrap": [
+      ".venv/bin/python -m pip install -e . --no-deps --quiet"
+    ],
+    "build": [],
+    "test": [
+      ".venv/bin/python -m pytest"
+    ],
+    "start": ".venv/bin/python -m captchabreaker.server",
+    "port": 8977,
+    "readinessPath": "/status"
+  }
+}

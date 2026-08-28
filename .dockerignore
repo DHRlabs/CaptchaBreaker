@@ -1,0 +1,12 @@
+.venv/
+.venv311/
+__pycache__/
+*.pyc
+.git/
+.hermes/
+.pytest_cache/
+tests/
+examples/real/
+*.egg-info/
+build/
+dist/
