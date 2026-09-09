@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from captchabreaker import __version__
 from captchabreaker.config import settings
 from captchabreaker.models import SolveRequest, SolveResponse, StatusResponse
-from captchabreaker.solvers import ensure_network_solver, registry
+from captchabreaker.solvers import registry
 
 log = logging.getLogger("captchabreaker.server")
 
@@ -41,8 +41,6 @@ def status() -> StatusResponse:
     return StatusResponse(
         status="ok",
         version=__version__,
-        provider=settings.provider,
-        network_enabled=settings.network_enabled,
         cache_hits=registry.cache_hits,
     )
 
@@ -59,7 +57,7 @@ async def solve(req: SolveRequest) -> SolveResponse:
 
 @app.post("/solve/{captcha_type}", response_model=SolveResponse, tags=["solve"])
 async def solve_typed(captcha_type: str, req: SolveRequest) -> SolveResponse:
-    """Typed solve endpoint: /solve/image, /solve/recaptcha_v2, etc.
+    """Typed solve endpoint: /solve/image, /solve/text, /solve/math.
 
     The path segment overrides req.type.
     """
@@ -83,7 +81,6 @@ async def _unhandled(req, exc) -> JSONResponse:
 
 
 def main() -> None:
-    ensure_network_solver()
     import uvicorn
     log.info("CaptchaBreaker serving on http://127.0.0.1:%d", settings.port)
     uvicorn.run(app, host="127.0.0.1", port=settings.port, log_level="info")

@@ -122,16 +122,21 @@ def test_cdp_mouse_and_close(fake_cdp):
 # HumanPass coordination (against a fake CDP)
 # ---------------------------------------------------------------------------
 class FakeCDP:
-    def __init__(self, box=None):
-        self.box = box
+    """Serves a fixed sequence of detect() states; counts issued input."""
+
+    def __init__(self, detections):
+        self.detections = list(detections)
         self.moves = []
         self.downs = []
         self.ups = []
+        self._n = 0
 
     def evaluate(self, js):
         if "innerWidth" in js or "innerHeight" in js:
             return {"w": 800, "h": 600}
-        return self.box  # for the find-box snippet
+        i = min(self._n, len(self.detections) - 1)
+        self._n += 1
+        return self.detections[i]
 
     def mouse_move(self, x, y, buttons=0):
         self.moves.append((x, y))
@@ -146,23 +151,40 @@ class FakeCDP:
         return b"png-bytes"
 
 
-def test_pass_captcha_no_widget_returns_false():
+_BOX = {"found": True, "box": {"cx": 120.0, "cy": 60.0, "x": 100, "y": 50,
+        "w": 40, "h": 20, "tag": "iframe"}, "token": "", "phrases": True}
+
+
+def test_pass_captcha_absent_returns_true():
     from captchabreaker.humanpass.passer import HumanPass
-    hp = HumanPass(FakeCDP(box={"found": False}), seed=1)
-    assert hp.pass_captcha() is False
+    hp = HumanPass(FakeCDP([{"found": False, "box": None, "token": "",
+                             "phrases": False}]), seed=1)
+    assert hp.pass_captcha() is True
     assert hp.cdp.downs == []  # didn't click anything
+    assert hp.last_outcome == "absent"
 
 
-def test_pass_captcha_click_widget(monkeypatch):
+def test_pass_captcha_click_clears_widget(monkeypatch):
     from captchabreaker.humanpass.passer import HumanPass
-    cdp = FakeCDP(box={"found": True, "cx": 120.0, "cy": 60.0,
-                       "x": 100, "y": 50, "w": 40, "h": 20, "tag": "iframe"})
+    cleared = dict(_BOX, token="tok123")
+    cdp = FakeCDP([_BOX, cleared])
     hp = HumanPass(cdp, seed=1, vision=False)
     monkeypatch.setattr("captchabreaker.humanpass.passer.time.sleep", lambda s: None)
     assert hp.pass_captcha() is True
-    assert len(cdp.downs) == 1          # one click on the widget
+    assert hp.last_outcome == "cleared"
+    assert len(cdp.downs) == 1          # one hover-dwell click on the widget
     assert cdp.downs[0][0] == 120.0
-    assert len(cdp.moves) > 1            # human path had multiple move frames
+    assert len(cdp.moves) > 1           # human trajectory had multiple frames
+
+
+def test_pass_captcha_still_blocking_returns_false(monkeypatch):
+    from captchabreaker.humanpass.passer import HumanPass
+    cdp = FakeCDP([_BOX, _BOX])  # still blocking after the click
+    hp = HumanPass(cdp, seed=1, vision=False)
+    monkeypatch.setattr("captchabreaker.humanpass.passer.time.sleep", lambda s: None)
+    assert hp.pass_captcha() is False
+    assert hp.last_outcome == "still_blocking"
+    assert len(cdp.downs) == 1
 
 
 # ---------------------------------------------------------------------------

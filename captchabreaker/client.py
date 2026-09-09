@@ -12,17 +12,18 @@ the same solver backend registry as the server.
 from __future__ import annotations
 
 import time
-from typing import Optional, Tuple
+from typing import Tuple
 
 import httpx
 
 from captchabreaker.config import settings
 from captchabreaker.models import CaptchaType, SolveRequest, SolveResponse
-from captchabreaker.solvers import ensure_network_solver, registry
+from captchabreaker.solvers import registry
+
+_HTTP_TIMEOUT = 60
 
 
 def _route(req: SolveRequest) -> SolveResponse:
-    ensure_network_solver()
     start = time.perf_counter()
     resp = registry.solve(req)
     if resp.duration_ms == 0:
@@ -46,15 +47,6 @@ def solve_math(image: str) -> Tuple[str, bool]:
     return r.solution, r.success
 
 
-def solve_network(captcha_type: str, sitekey: str, page_url: str,
-                  **extra) -> SolveResponse:
-    """Solve reCAPTCHA / hCaptcha / Turnstile via the configured provider."""
-    return _route(SolveRequest(
-        type=CaptchaType(captcha_type),
-        sitekey=sitekey, page_url=page_url, extra=extra,
-    ))
-
-
 def solve(req: SolveRequest) -> SolveResponse:
     """Generic entry — pass your own SolveRequest."""
     return _route(req)
@@ -70,13 +62,9 @@ class RemoteClient:
 
     def solve(self, req: SolveRequest) -> SolveResponse:
         r = httpx.post(f"{self.base_url}/solve", json=req.model_dump(mode="json"),
-                       timeout=config_timeout())
+                       timeout=_HTTP_TIMEOUT)
         r.raise_for_status()
         return SolveResponse.model_validate(r.json())
 
     def status(self) -> dict:
         return httpx.get(f"{self.base_url}/status").json()
-
-
-def config_timeout() -> float:
-    return float(settings.timeout + 10)

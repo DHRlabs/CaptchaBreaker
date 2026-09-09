@@ -1,20 +1,17 @@
 # CaptchaBreaker
 
-A self-contained CAPTCHA-solving service for LLM agents and programs that puppeteer browsers.
+A self-contained, **fully local and offline** CAPTCHA-solving service for LLM agents and programs that puppeteer browsers.
 
-Your agents run into CAPTCHAs all day (job applications, signups, searches). CaptchaBreaker gives
-them **one local endpoint** they can call to get the answer — no Chrome extension surgery, no
-account juggling.
+Your agents run into CAPTCHAs all day (job applications, signups, searches). CaptchaBreaker gives them **one local endpoint** they can call to get the answer — no Chrome extension surgery, no account juggling, and no paid provider or API key.
 
-It has **two solving backends**, chosen automatically by captcha type:
+It has **two local capabilities**, neither of which costs anything:
 
-| Captcha family | Backend | Cost | API key? |
+| Task | Backend | Cost | API key? |
 |---|---|---|---|
 | Image / text / math (distorted-text CAPTCHAs) | Local ONNX OCR engine (`RapidOCR`) | free | **no** — works offline |
-| reCAPTCHA v2/v3, hCaptcha, Turnstile, FunCaptcha, GeeTest | Cloud provider (CapSolver / 2Captcha / CapMonster / RuCaptcha) | per-solve (~$1–3 / 1k) | yes — optional |
+| reCAPTCHA v2/v3, hCaptcha, Turnstile checkboxes | HumanPass behavioral click-through | free | **no** |
 
-If no API key is set)Skip and a network CAPTCHA arrives,Skip it returns a graceful "unconfigured" response
-so your agent can fall back to its own retry logic instead of erroring.
+There is no cloud provider to configure. Image CAPTCHAs are solved offline by OCR; browser-level "I am not a robot" widgets are cleared by HumanPass moving a real cursor like a person does.
 
 ---
 
@@ -39,10 +36,6 @@ curl -X POST http://127.0.0.1:8977/solve \
 
 # Math captcha
 curl -X POST http://127.0.0.1:8977/solve/math -d '{"image":"/tmp/cap.png"}'
-
-# Network captcha (needs CAPTCHABREAKER_API_KEY)
-curl -X POST http://127.0.0.1:8977/solve \
-  -d '{"type":"recaptcha_v2","sitekey":"6Lc...","page_url":"https://site.com"}'
 ```
 
 Interactive docs are auto-served at `http://127.0.0.1:8977/docs`.
@@ -50,11 +43,10 @@ Interactive docs are auto-served at `http://127.0.0.1:8977/docs`.
 ## Interface 2 — Python SDK (in-process, no HTTP)
 
 ```python
-from captchabreaker import solve_image, solve_math, solve_network
+from captchabreaker import solve_image, solve_math
 
 answer, ok = solve_image("/tmp/captcha.png")      # (str, bool)
 answer, ok = solve_math("/tmp/math.png")
-resp = solve_network("recaptcha_v2", "6Lc...", "https://site.com")
 ```
 
 ## Interface 3 — CLI
@@ -63,7 +55,6 @@ resp = solve_network("recaptcha_v2", "6Lc...", "https://site.com")
 captchabreaker status
 captchabreaker solve image captcha.png
 captchabreaker solve math captcha.png
-captchabreaker recaptcha 6Lc... https://site.com
 ```
 
 ## Puppeteer (Node) example
@@ -73,16 +64,13 @@ type the returned answer into the page.
 
 ## Configuration
 
-Copy `.env.example` → `.env`. Only the provider key is ever required, and only for
-network CAPTCHAs:
+CaptchaBreaker needs **no configuration** to run. Copy `.env.example` → `.env` only
+if you want to change the server port or enable debug logging:
 
 | Env var | Purpose |
 |---|---|
-| `CAPTCHABREAKER_PROVIDER` | capsolver (default) · 2captcha · capmonster · rucaptcha |
-| `CAPTCHABREAKER_API_KEY` | provider key for reCAPTCHA/hCaptcha/etc. |
-| `CAPTCHABREAKER_HOST` | override provider host |
-| `CAPTCHABREAKER_TIMEOUT` | poll timeout for network solves (s) |
 | `CAPTCHABREAKER_PORT` | local server port (default 8977) |
+| `CAPTCHABREAKER_DEBUG` | debug logging |
 
 ## Project layout
 
@@ -96,12 +84,11 @@ captchabreaker/
   captcha_ocr_config.yaml  # OCR detection thresholds tuned for CAPTCHAs
   solvers/
     image_ocr.py   # free, offline OCR for image/text/math
-    network.py     # CapSolver/2Captcha-style provider protocol
     base.py        # input decoding (base64 / file / data: URL)
   humanpass/
     motion.py      # human-like mouse trajectory + typing/scroll timing
     cdp.py         # minimal Chrome DevTools Protocol client (WebSocket)
-    passer.py      # finds & human-clicks CAPTCHA widgets; drives grids via vision
+    passer.py      # finds & human-clicks CAPTCHA widgets; verifies the pass
     vision.py      # optional OpenAI-compatible vision solver (click coords/text)
 examples/          # agent examples (Py + Puppeteer), captcha + human_pass demos
 scripts/benchmark_real.py   # accuracy benchmark vs real labeled CAPTCHAs
@@ -114,17 +101,25 @@ Dockerfile / docker-compose.yml   # container deployment
 CaptchaBreaker's solvers handle captcha *images*. **HumanPass** handles the
 browser-level challenge: it drives a real Chrome (over CDP, no Playwright) and
 moves the cursor like a human to click through reCAPTCHA / hCaptcha / Turnstile /
-"prove you are human" widgets. Its motion engine emits realistic paths (Bezier
-curves with acceleration, micro-jitter, overshoot, human timing) — the signals
-anti-bot classifiers actually score on.
+"prove you are human" widgets. Its motion engine emits realistic paths (resting
+cursor, then a quick press — the pattern that reads as human, not scripted).
+
+`pass_captcha()` now **verifies** the result: it re-checks the page after clicking
+to confirm the challenge cleared (a response token is present or the widget is
+gone) before reporting success. It returns `True` when nothing is blocking (no
+CAPTCHA, already cleared, or successfully cleared) and `False` when a genuine
+challenge is still blocking — so the caller can fall back honestly instead of
+quietly continuing past a window that never opened.
 
 ```python
 from captchabreaker.humanpass import CDPClient, HumanPass
 
 with CDPClient(find_ws_url_for("http://127.0.0.1:9222")) as cdp:
     hp = HumanPass(cdp)
-    if hp.pass_captcha():        # found & clicked the widget human-ly
+    if hp.pass_captcha():            # cleared (or nothing to pass)
         ...
+    else:
+        print(hp.last_outcome)        # e.g. "still_blocking"
 ```
 
 Requires the `[browser]` extra (`pip install captchabreaker[browser]`), launches
@@ -151,8 +146,7 @@ distorted CAPTCHAs reliably on its own. Benchmarked against a real labeled datas
 | Reads ≥60% of chars correctly | ~half of images |
 
 It fully solves clean/light captchas and returns **partial answers** on hard ones
-(e.g. reads `000` from `000ju`) — enough for an agent to submit and retry. For sites
-with serious distortion, use the paid provider (#2 below) for reliable solves.
+(e.g. reads `000` from `000ju`) — enough for an agent to submit and retry.
 
 Re-run the benchmark:
 ```bash
@@ -168,20 +162,6 @@ docker run -p 8977:8977 captchabreaker          # or: docker compose up
 
 The container exposes the HTTP API on port 8977 with a `/status` healthcheck. The
 OCR models are pre-fetched at image build time so the runtime works offline.
-
-## Configure the paid provider (reCAPTCHA / hCaptcha / Turnstile)
-
-The local OCR only handles image/text/math captchas. For the browser-level
-challenges (reCAPTCHA v2/v3, hCaptcha, Turnstile), set a provider key. These are
-third-party cloud services that solve them for you:
-
-```bash
-export CAPTCHABREAKER_API_KEY=your_key_here      # from 2Captcha / CapSolver / etc.
-export CAPTCHABREAKER_PROVIDER=capsolver         # optional, default
-```
-
-Then an agent just sends the page's `sitekey` + `page_url` and receives a token
-to inject into the page. See `.env.example`.
 
 ## Run the tests
 

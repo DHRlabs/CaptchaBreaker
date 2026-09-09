@@ -26,7 +26,7 @@ def test_status(client):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert "network_enabled" in body
+    assert "version" in body
 
 
 def test_solve_invalid_payload(client):
@@ -55,13 +55,3 @@ def test_unknown_type(client):
     r = client.post("/solve/notarealtype", json={})
     assert r.status_code == 200
     assert r.json()["success"] is False
-
-
-def test_network_no_key_graceful(client):
-    # With no API key configured, network captchas must return a graceful failure.
-    r = client.post("/solve", json={
-        "type": "recaptcha_v2", "sitekey": "abc", "page_url": "https://x.com",
-    })
-    body = r.json()
-    assert body["success"] is False
-    assert "API key" in (body.get("raw") or {}).get("error", "")

@@ -2,17 +2,21 @@
 
 HumanPass drives a live Chrome (via the minimal CDP client) to:
 
-  1. Locate the CAPTCHA (reCAPTCHA / hCaptcha / Turnstile iframe or a
-     "prove you are human" button) by running JS in the page.
-  2. Move the cursor there along a human trajectory and click with human timing.
-     For reCAPTCHA v2/checkbox challenges, that alone triggers the silent
+  1. Locate the CAPTCHA (reCAPTCHA / hCaptcha / Turnstile iframe, a
+     "prove you are human" button, or a page already carrying a response token)
+     by running JS in the page.
+  2. Move the cursor there along a human trajectory, REST a beat, then click
+     with human timing. A resting cursor before a quick press is how a person
+     clicks — a click that never moved reads as scripted. This exact
+     hover-dwell-then-press pattern is what live deployment uses to pass
+     reCAPTCHA (rolled in from jscan's bot-check hook, proven against Indeed's
+     reCAPTCHA). For v2/checkbox challenges that alone triggers the silent
      behavioral challenge and completes the pass — no vision needed.
-  3. If an image grid challenge appears AND a vision solver is configured,
-     screenshot the page, ask the vision model where to click, then human-click
-     each tile. Without vision it degrades gracefully (the checkbox attempt
-     still goes through).
-  4. Human scroll/type helpers so the rest of the page interaction also reads
-     natural.
+  3. Verify the pass: re-run detection and confirm the CAPTCHA cleared (a
+     response token is now present or the widget is gone). If it is genuinely
+     still blocking and a vision solver is configured, offer it an image-grid
+     attempt before reporting stuck.
+  4. Human scroll/type helpers so the rest of the page also reads natural.
 
 Separating concerns: `motion` is the hand (pure), `cdp` is the transport,
 `vision` is the brain (optional), and this class is the conductor.
@@ -28,39 +32,49 @@ from captchabreaker.humanpass import motion
 from captchabreaker.humanpass.cdp import CDPClient
 from captchabreaker.humanpass import vision as vision_mod
 
-# JS: find the captcha widget's on-screen box (cross-origin iframe or button text).
-_FIND_BOX_JS = r"""
+# JS: detect the captcha widget's on-screen box, any response token already
+# issued, and whether the page text hints at a not-a-robot challenge. Token
+# inputs are included so an already-cleared challenge is treated as done.
+_DETECT_JS = r"""
 (() => {
-  const selectors = [
-    'iframe[title="reCAPTCHA"]',
-    '.g-recaptcha',
-    'iframe[src*="recaptcha"]',
-    'iframe[title*="hCaptcha"]',
-    'iframe[src*="hcaptcha"]',
-    'iframe[src*="challenges.cloudflare"]',
-    'iframe[title*="Turnstile"]',
+  const sel = [
+    'iframe[title="reCAPTCHA"]', '.g-recaptcha', 'iframe[src*="recaptcha"]',
+    'iframe[title*="hCaptcha"]', 'iframe[src*="hcaptcha"]',
+    'iframe[src*="challenges.cloudflare"]', 'iframe[title*="Turnstile"]',
+    'textarea[name="g-recaptcha-response"]', 'input[name="cf-turnstile-response"]',
   ];
-  for (const s of selectors) {
+  let box = null;
+  for (const s of sel) {
     const el = document.querySelector(s);
-    if (el) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0) {
-        return {found:true, x:r.x, y:r.y, w:r.width, h:r.height,
-                cx:r.x+r.width/2, cy:r.y+r.height/2, tag:s};
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      box = {tag:s, x:r.x, y:r.y, w:r.width, h:r.height,
+             cx:r.x+r.width/2, cy:r.y+r.height/2};
+      break;
+    }
+  }
+  let token = '';
+  for (const s of ['textarea[name="g-recaptcha-response"]','input[name="cf-turnstile-response"]']) {
+    const el = document.querySelector(s);
+    if (el && el.value) { token = el.value; break; }
+  }
+  if (!box) {
+    const phrases = ['prove you are human','prove your humanity',
+                     'verify you are human','continue'];
+    for (const b of document.querySelectorAll('button, a[role="button"]')) {
+      const txt = (b.textContent||'').trim().toLowerCase();
+      const r = b.getBoundingClientRect();
+      if (phrases.some(p => txt.includes(p)) && r.width > 0 && r.height > 0) {
+        box = {tag:'button:'+txt.slice(0,30), x:r.x, y:r.y, w:r.width, h:r.height,
+                cx:r.x+r.width/2, cy:r.y+r.height/2};
+        break;
       }
     }
   }
-  const phrases = ['prove you are human','prove your humanity',
-                   'verify you are human','continue'];
-  for (const b of document.querySelectorAll('button, a[role="button"]')) {
-    const txt = (b.textContent||'').trim().toLowerCase();
-    const r = b.getBoundingClientRect();
-    if (phrases.some(p => txt.includes(p)) && r.width > 0 && r.height > 0) {
-      return {found:true, x:r.x, y:r.y, w:r.width, h:r.height,
-              cx:r.x+r.width/2, cy:r.y+r.height/2, tag:'button:'+txt.slice(0,40)};
-    }
-  }
-  return {found:false};
+  const body = (document.body && document.body.innerText || '').slice(0, 2000);
+  const phrases = /i'?m not a robot|verify you are human|prove you are human|hcaptcha|recaptcha|captcha/i.test(body);
+  return {found: !!box, box: box, token: token, phrases: phrases};
 })()
 """
 
@@ -74,6 +88,7 @@ class HumanPass:
         self.rng = random.Random(seed)
         self.vision = vision if vision is not None else vision_mod.vision_enabled()
         self._cursor: Optional[tuple] = None
+        self.last_outcome: str = "never_run"
 
     # -- cursor -------------------------------------------------------------
     def _cursor_pos(self):
@@ -96,6 +111,10 @@ class HumanPass:
 
     def _human_click(self, x: float, y: float) -> None:
         self._human_move(x, y)
+        # Resting cursor, then a quick press: how a person clicks. A click that
+        # never moved reads as scripted. (Live-proven hover-dwell click from
+        # jscan's bot-check hook.)
+        time.sleep(self.rng.uniform(40, 120) / 1000.0)
         hold = self.rng.uniform(70, 160)
         self.cdp.mouse_down(x, y)
         time.sleep(hold / 1000.0)
@@ -111,9 +130,21 @@ class HumanPass:
         """An idle pause before acting, scaled like a human deciding what to do."""
         time.sleep(self.rng.uniform(min_ms, max_ms) / 1000.0)
 
+    def detect(self) -> Dict:
+        """Run widget/token/phrase detection in the page. Returns the raw state."""
+        return self.cdp.evaluate(_DETECT_JS) or {}
+
     def find_box(self) -> Optional[Dict]:
-        box = self.cdp.evaluate(_FIND_BOX_JS)
-        return box if box and box.get("found") else None
+        """Return the captcha widget's box dict (cx/cy/tag/...) or None."""
+        state = self.detect()
+        return state.get("box") if state.get("found") else None
+
+    def _state_clear(self, state: Dict) -> bool:
+        """True when nothing is blocking: a token is present, or no widget or
+        challenge phrase remains on the page."""
+        if state.get("token"):
+            return True
+        return not (state.get("found") or state.get("phrases"))
 
     def scroll(self, delta_y: int) -> None:
         for step, pause in motion.human_scroll_steps(delta_y, seed=self.rng.random()):
@@ -131,23 +162,42 @@ class HumanPass:
             self.cdp.key(ch, ch)
             time.sleep(ivl / 1000.0)
 
-    def pass_captcha(self, *, grid_timeout: float = 6.0) -> bool:
-        """Attempt to click through the CAPTCHA human-ly. Returns True if it did
+    def pass_captcha(self, *, grid_timeout: float = 6.0,
+                     verify_delay: float = 1.2) -> bool:
+        """Attempt to get past the CAPTCHA human-ly.
 
-        anything (a widget was clicked), False if no captcha was found.
+        Returns True when nothing is blocking: no CAPTCHA present, it already
+        carried a response token, or our human click cleared it. Returns False
+        when a CAPTCHA was found and is still blocking after the attempt — the
+        caller should treat that as genuinely stuck and fall back (e.g. report
+        it for a human). Diagnostics are left on `self.last_outcome`.
         """
         self.settle(200, 700)
-        box = self.find_box()
-        if not box:
-            return False
+        state = self.detect()
+        if self._state_clear(state):
+            self.last_outcome = "absent" if not state.get("found") else "already_cleared"
+            return True
 
-        self._human_click(box["cx"], box["cy"])
-        self._human_move(box["cx"], box["cy"] + 30)  # look away, human behavior
+        box = state.get("box")
+        if box:
+            self._human_click(box["cx"], box["cy"])
+            time.sleep(verify_delay)
+            after = self.detect()
+            if self._state_clear(after):
+                self.last_outcome = "cleared"
+                return True
 
-        # Optional grid round: after the checkbox, a challenge grid may appear.
+        # A widget is still blocking. If a vision solver is configured, give it
+        # a shot at an image-grid challenge before reporting stuck.
         if self.vision:
             self._try_grid(grid_timeout)
-        return True
+            retry = self.detect()
+            if self._state_clear(retry):
+                self.last_outcome = "cleared_by_vision"
+                return True
+
+        self.last_outcome = "still_blocking" if box else "challenge_phrase_no_target"
+        return False
 
     def _try_grid(self, timeout: float) -> None:
         """If a vision model is configured, screenshot and click any image tiles."""

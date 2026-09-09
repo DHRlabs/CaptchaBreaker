@@ -9,7 +9,7 @@ import base64
 import sys
 
 # Option 1: in-process SDK ------------------------------------------------
-from captchabreaker import solve_image, solve_math, solve_network
+from captchabreaker import solve_image, solve_math
 
 def demo_sdk(captcha_path: str):
     print("=== SDK: local image captcha ===")
@@ -19,10 +19,6 @@ def demo_sdk(captcha_path: str):
     print("=== SDK: math captcha ===")
     answer, ok = solve_math(captcha_path)  # (would be a different image in real life)
     print(f"  math result: {answer!r}  success={ok}")
-
-    print("=== SDK: reCAPTCHA via network provider (needs API key) ===")
-    resp = solve_network("recaptcha_v2", "6LcMyJwUAAAAAG3tW", "https://example.com")
-    print(f"  {resp.channel}: {resp.solution!r}")
 
 # Option 2: HTTP API --------------------------------------------------------
 def demo_http(captcha_path: str):

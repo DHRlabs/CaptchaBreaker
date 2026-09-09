@@ -6,9 +6,7 @@ services:
     ports:
       - "8977:8977"
     environment:
-      # Optional: provider key for reCAPTCHA/hCaptcha/Turnstile solves.
-      # Leave empty to use the free offline OCR path only.
-      - CAPTCHABREAKER_PROVIDER=${CAPTCHABREAKER_PROVIDER:-capsolver}
-      - CAPTCHABREAKER_API_KEY=${CAPTCHABREAKER_API_KEY:-}
-      - CAPTCHABREAKER_TIMEOUT=${CAPTCHABREAKER_TIMEOUT:-120}
+      # No keys or providers: CaptchaBreaker is fully local and offline.
+      - CAPTCHABREAKER_PORT=8977
+      - CAPTCHABREAKER_DEBUG=0
     restart: unless-stopped
