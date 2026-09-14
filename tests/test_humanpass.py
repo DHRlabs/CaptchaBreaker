@@ -187,6 +187,36 @@ def test_pass_captcha_still_blocking_returns_false(monkeypatch):
     assert len(cdp.downs) == 1
 
 
+@pytest.mark.parametrize("detection", [None, {"found": False}])
+def test_pass_captcha_detection_failure_returns_false(monkeypatch, detection):
+    from captchabreaker.humanpass.passer import HumanPass
+
+    hp = HumanPass(FakeCDP([detection]), seed=1, vision=False)
+    monkeypatch.setattr("captchabreaker.humanpass.passer.time.sleep", lambda s: None)
+    assert hp.pass_captcha() is False
+    assert hp.last_outcome == "detection_failed"
+
+
+def test_pass_captcha_verification_detection_failure_returns_false(monkeypatch):
+    from captchabreaker.humanpass.passer import HumanPass
+
+    hp = HumanPass(FakeCDP([_BOX, None]), seed=1, vision=False)
+    monkeypatch.setattr("captchabreaker.humanpass.passer.time.sleep", lambda s: None)
+    assert hp.pass_captcha() is False
+    assert hp.last_outcome == "detection_failed"
+    assert len(hp.cdp.downs) == 1
+
+
+def test_pass_captcha_vision_retry_detection_failure_returns_false(monkeypatch):
+    from captchabreaker.humanpass.passer import HumanPass
+
+    hp = HumanPass(FakeCDP([_BOX, _BOX, None]), seed=1, vision=True)
+    monkeypatch.setattr("captchabreaker.humanpass.passer.time.sleep", lambda s: None)
+    monkeypatch.setattr(hp, "_try_grid", lambda timeout: None)
+    assert hp.pass_captcha() is False
+    assert hp.last_outcome == "detection_failed"
+
+
 # ---------------------------------------------------------------------------
 # CommandAdapter (wrapping an existing duck-typed CDP session)
 # ---------------------------------------------------------------------------
@@ -236,6 +266,18 @@ def test_vision_disabled_returns_empty(monkeypatch):
     assert v.solve_image_with_vision(b"x") == {}
 
 
+def test_generic_openai_key_does_not_enable_vision(monkeypatch):
+    monkeypatch.delenv("VISION_ENABLED", raising=False)
+    monkeypatch.delenv("VISION_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    from captchabreaker.humanpass import vision as v
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("vision request sent"))
+    assert v.vision_enabled() is False
+    assert v.solve_image_with_vision(b"png") == {}
+
+
 class _Resp:
     def raise_for_status(self): pass
     def json(self):
@@ -244,6 +286,7 @@ class _Resp:
 
 
 def test_vision_parses_clicks(monkeypatch):
+    monkeypatch.setenv("VISION_ENABLED", "1")
     monkeypatch.setenv("VISION_API_KEY", "k")
     monkeypatch.setenv("VISION_MODEL", "m")
     import httpx
@@ -252,3 +295,59 @@ def test_vision_parses_clicks(monkeypatch):
     assert v.vision_enabled() is True
     out = v.solve_image_with_vision(b"png")
     assert out.get("clicks") == [[5, 6], [120, 80]]
+
+
+def test_explicit_vision_opt_in_sends_with_generic_key(monkeypatch):
+    monkeypatch.delenv("VISION_ENABLED", raising=False)
+    monkeypatch.delenv("VISION_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    import httpx
+    from captchabreaker.humanpass import vision as v
+
+    calls = []
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: calls.append((a, k)) or _Resp())
+    out = v.solve_image_with_vision(b"png", enabled=True)
+    assert out.get("clicks") == [[5, 6], [120, 80]]
+    assert calls
+
+
+def test_explicit_vision_false_disables_configured_backend(monkeypatch):
+    monkeypatch.setenv("VISION_ENABLED", "1")
+    monkeypatch.setenv("VISION_API_KEY", "k")
+    import httpx
+    from captchabreaker.humanpass import vision as v
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("vision request sent"))
+    assert v.solve_image_with_vision(b"png", enabled=False) == {}
+
+
+def test_detect_js_rejects_ordinary_continue_button():
+    """Run the production detector against a small synthetic DOM in Node."""
+    import json
+    import shutil
+    import subprocess
+    from captchabreaker.humanpass.passer import _DETECT_JS
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    harness = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(0, "utf8");
+const text = process.argv[1];
+const button = {
+  textContent: text,
+  getBoundingClientRect: () => ({x: 10, y: 20, width: 100, height: 30})
+};
+const document = {
+  querySelector: () => null,
+  querySelectorAll: () => [button],
+  body: {innerText: ""}
+};
+process.stdout.write(JSON.stringify(vm.runInNewContext(source, {document})));
+"""
+    result = subprocess.run([node, "-e", harness, "Continue"], input=_DETECT_JS,
+                            text=True, capture_output=True, check=True)
+    state = json.loads(result.stdout)
+    assert state == {"found": False, "box": None, "token": "", "phrases": False}

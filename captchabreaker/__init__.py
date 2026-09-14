@@ -1,10 +1,10 @@
-"""CaptchaBreaker — self-contained CAPTCHA-solving service for LLM agents that puppeteer browsers.
+"""CaptchaBreaker — local-first CAPTCHA-solving service for LLM agents that puppeteer browsers.
 
 Pipeline:
     image/text/math -> local OCR engine (free, offline, no API key)
 Browser-level reCAPTCHA / hCaptcha / Turnstile checkboxes are handled by the
 HumanPass module, which clicks through them behaviorally — still no paid
-service and no cloud provider.
+service by default. An optional external vision backend can handle image grids.
 """
 
 from captchabreaker.config import settings  # noqa: F401

@@ -1,11 +1,12 @@
 # CaptchaBreaker — self-contained CAPTCHA-solving service.
 # Build:   docker build -t captchabreaker .
-# Run:     docker run -p 8977:8977 captchabreaker
+# Run:     docker run -p 127.0.0.1:8977:8977 captchabreaker
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    CAPTCHABREAKER_PORT=8977
+    CAPTCHABREAKER_PORT=8977 \
+    CAPTCHABREAKER_HOST=0.0.0.0
 
 WORKDIR /app
 

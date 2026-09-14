@@ -61,7 +61,7 @@ _DETECT_JS = r"""
   }
   if (!box) {
     const phrases = ['prove you are human','prove your humanity',
-                     'verify you are human','continue'];
+                     'verify you are human'];
     for (const b of document.querySelectorAll('button, a[role="button"]')) {
       const txt = (b.textContent||'').trim().toLowerCase();
       const r = b.getBoundingClientRect();
@@ -130,14 +130,37 @@ class HumanPass:
         """An idle pause before acting, scaled like a human deciding what to do."""
         time.sleep(self.rng.uniform(min_ms, max_ms) / 1000.0)
 
-    def detect(self) -> Dict:
-        """Run widget/token/phrase detection in the page. Returns the raw state."""
-        return self.cdp.evaluate(_DETECT_JS) or {}
+    def detect(self) -> Optional[Dict]:
+        """Run widget/token/phrase detection, or return None on failure."""
+        try:
+            state = self.cdp.evaluate(_DETECT_JS)
+        except Exception:  # noqa: BLE001
+            return None
+        return state if self._valid_state(state) else None
 
     def find_box(self) -> Optional[Dict]:
         """Return the captcha widget's box dict (cx/cy/tag/...) or None."""
         state = self.detect()
-        return state.get("box") if state.get("found") else None
+        return state.get("box") if state and state.get("found") else None
+
+    @staticmethod
+    def _valid_state(state: object) -> bool:
+        """Recognize the complete state shape returned by ``_DETECT_JS``."""
+        if not isinstance(state, dict):
+            return False
+        if not isinstance(state.get("found"), bool):
+            return False
+        if not isinstance(state.get("token"), str):
+            return False
+        if not isinstance(state.get("phrases"), bool):
+            return False
+        box = state.get("box")
+        if not state["found"]:
+            return box is None
+        if not isinstance(box, dict):
+            return False
+        return all(isinstance(box.get(key), (int, float))
+                   for key in ("cx", "cy"))
 
     def _state_clear(self, state: Dict) -> bool:
         """True when nothing is blocking: a token is present, or no widget or
@@ -174,6 +197,9 @@ class HumanPass:
         """
         self.settle(200, 700)
         state = self.detect()
+        if state is None:
+            self.last_outcome = "detection_failed"
+            return False
         if self._state_clear(state):
             self.last_outcome = "absent" if not state.get("found") else "already_cleared"
             return True
@@ -183,6 +209,9 @@ class HumanPass:
             self._human_click(box["cx"], box["cy"])
             time.sleep(verify_delay)
             after = self.detect()
+            if after is None:
+                self.last_outcome = "detection_failed"
+                return False
             if self._state_clear(after):
                 self.last_outcome = "cleared"
                 return True
@@ -192,6 +221,9 @@ class HumanPass:
         if self.vision:
             self._try_grid(grid_timeout)
             retry = self.detect()
+            if retry is None:
+                self.last_outcome = "detection_failed"
+                return False
             if self._state_clear(retry):
                 self.last_outcome = "cleared_by_vision"
                 return True
@@ -208,7 +240,7 @@ class HumanPass:
                 shot = self.cdp.screenshot()
             except Exception:  # noqa: BLE001
                 return
-            result = vision_mod.solve_image_with_vision(shot)
+            result = vision_mod.solve_image_with_vision(shot, enabled=True)
             clicks = result.get("clicks")
             if isinstance(clicks, list) and clicks:
                 seen = True

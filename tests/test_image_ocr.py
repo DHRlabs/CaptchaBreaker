@@ -52,6 +52,54 @@ def test_math_image_end_to_end():
     assert answer == "8"
 
 
+def test_ocr_loads_captcha_threshold_config():
+    """The installed RapidOCR engine receives the CAPTCHA-specific thresholds."""
+    from pathlib import Path
+    from captchabreaker.solvers import image_ocr
+
+    assert Path(image_ocr._CONFIG_PATH).is_file()
+    engine = image_ocr._get_engine()
+    assert engine.text_score == pytest.approx(0.3)
+    assert engine.min_height == 15
+    assert engine.width_height_ratio == 16
+    assert engine.text_det.postprocess_op.box_thresh == pytest.approx(0.2)
+
+
+def test_registry_refreshes_overwritten_files_and_caches_payloads(tmp_path):
+    """File paths are mutable inputs; immutable payloads remain cacheable."""
+    import base64
+    from captchabreaker.models import CaptchaType, SolveRequest, SolveResponse
+    from captchabreaker.solvers import SolverRegistry
+    from captchabreaker.solvers.base import decode_image
+
+    class PayloadSolver:
+        def __init__(self):
+            self.calls = 0
+
+        def solve(self, req):
+            self.calls += 1
+            raw = decode_image(req.image or "")
+            return SolveResponse.ok(req.type, raw.decode(), channel="local")
+
+    local = PayloadSolver()
+    registry = SolverRegistry(local)
+    path = tmp_path / "screenshot.png"
+    path.write_bytes(b"old")
+    request = SolveRequest(type=CaptchaType.IMAGE, image=str(path))
+
+    assert registry.solve(request).solution == "old"
+    path.write_bytes(b"new")
+    assert registry.solve(request).solution == "new"
+    assert registry.cache_hits == 0
+
+    payload = base64.b64encode(b"immutable-payload").decode()
+    payload_request = SolveRequest(type=CaptchaType.IMAGE, image=payload)
+    assert registry.solve(payload_request).solution == "immutable-payload"
+    assert registry.solve(payload_request).solution == "immutable-payload"
+    assert registry.cache_hits == 1
+    assert local.calls == 3
+
+
 def test_decode_image_helpers():
     from captchabreaker.solvers.base import decode_image
     import base64

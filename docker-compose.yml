@@ -4,9 +4,10 @@ services:
     image: captchabreaker:latest
     container_name: captchabreaker
     ports:
-      - "8977:8977"
+      - "127.0.0.1:8977:8977"
     environment:
-      # No keys or providers: CaptchaBreaker is fully local and offline.
+      # Local OCR and HumanPass need no external provider. Vision is opt-in.
       - CAPTCHABREAKER_PORT=8977
+      - CAPTCHABREAKER_HOST=0.0.0.0
       - CAPTCHABREAKER_DEBUG=0
     restart: unless-stopped

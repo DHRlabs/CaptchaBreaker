@@ -1,14 +1,13 @@
 """Solver backend registry.
 
-CaptchaBreaker solves image/text/math CAPTCHAs entirely with the local, offline
-OCR engine — no paid network provider, no API key. Browser-level challenges
-(reCAPTCHA / hCaptcha / Turnstile checkboxes) are handled separately by the
-HumanPass module, which clicks through them behaviorally for free. Unknown
+CaptchaBreaker solves image/text/math CAPTCHAs with the local, offline OCR
+engine. Browser-level challenges are handled separately by HumanPass. Unknown
 captcha types fail gracefully so an agent can fall back to its own logic.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Optional
 
 from captchabreaker.models import CaptchaType, SolveRequest, SolveResponse
@@ -29,6 +28,8 @@ class SolverRegistry:
     # -- cache -------------------------------------------------------------
     def cache_key(self, req: SolveRequest) -> Optional[str]:
         if req.type in _LOCAL_TYPES:
+            if req.image and _is_file_path(req.image):
+                return None
             return f"{req.type.value}:{req.image}" if req.image else None
         return None
 
@@ -56,3 +57,11 @@ class SolverRegistry:
 
 # Module-level singleton (shared across server, SDK, CLI).
 registry = SolverRegistry()
+
+
+def _is_file_path(value: str) -> bool:
+    """Return whether a payload currently names a filesystem file."""
+    try:
+        return Path(value.strip()).is_file()
+    except (OSError, ValueError):
+        return False
