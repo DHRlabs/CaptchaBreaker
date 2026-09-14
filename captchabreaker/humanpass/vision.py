@@ -2,17 +2,18 @@
 
 HumanPass can be pointed at any OpenAI-compatible vision endpoint so that the
 agent genuinely "sees" the captcha and decides where to click or what the text
-is — the brain for the motion engine's hand. It is fully optional: when no
-vision config is present, HumanPass simply relies on the silent behavioral
-checkbox path, which passes most reCAPTCHA v2/v3/Turnstile challenges by itself.
+is — the brain for the motion engine's hand. It is fully optional: without an
+explicit opt-in, HumanPass simply relies on the silent behavioral checkbox path,
+which passes most reCAPTCHA v2/v3/Turnstile challenges by itself.
 
 Configuration (env):
+    VISION_ENABLED    set to true to opt into external vision requests
     VISION_BASE_URL   e.g. https://api.openai.com/v1   (chat/completions appended)
     VISION_API_KEY     API key
     VISION_MODEL       model id (must support image input)
 
-It falls back to OPENAI_BASE_URL / OPENAI_API_KEY conditions so existing setups
-"just work" when they already expose an OpenAI-compatible endpoint.
+After explicit opt-in, it falls back to OPENAI_BASE_URL / OPENAI_API_KEY when
+an OpenAI-compatible endpoint is already configured.
 """
 
 from __future__ import annotations
@@ -32,8 +33,14 @@ def _cfg(name: str, fallback: str = ""):
     return os.getenv(name) or os.getenv(fallback) or ""
 
 
+def _enabled(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def vision_enabled() -> bool:
-    return bool(_cfg("VISION_API_KEY", "OPENAI_API_KEY"))
+    """Return whether configuration explicitly opts into external vision."""
+    return _enabled(os.getenv("VISION_ENABLED", "")) and bool(
+        _cfg("VISION_API_KEY", "OPENAI_API_KEY"))
 
 
 def _endpoint() -> str:
@@ -43,17 +50,24 @@ def _endpoint() -> str:
 
 def solve_image_with_vision(image_bytes: bytes,
                             prompt: str = "",
-                            timeout: float = 30.0) -> Dict[str, Any]:
+                            timeout: float = 30.0,
+                            *, enabled: Optional[bool] = None) -> Dict[str, Any]:
     """Ask the configured vision model to interpret a CAPTCHA image.
 
     The model returns JSON. For grid captchas we request click coordinates; for
     text captchas we request the text. Returning "{...}" JSON keeps parsing easy.
 
     Returns a dict, or {} on any failure (caller decides how to fail soft).
+
+    ``enabled=True`` is an explicit caller opt-in and can be used by
+    ``HumanPass(vision=True)``. With the default ``None``, the environment
+    opt-in is required.
     """
     if httpx is None:
         raise RuntimeError("httpx is required for the vision solver")
-    if not vision_enabled():
+    if not (vision_enabled() if enabled is None else enabled):
+        return {}
+    if not _cfg("VISION_API_KEY", "OPENAI_API_KEY"):
         return {}
 
     b64 = base64.b64encode(image_bytes).decode()

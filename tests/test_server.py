@@ -29,6 +29,16 @@ def test_status(client):
     assert "version" in body
 
 
+def test_server_uses_configured_host(monkeypatch):
+    import captchabreaker.server as server
+
+    calls = {}
+    monkeypatch.setattr(server.settings, "host", "0.0.0.0")
+    monkeypatch.setattr("uvicorn.run", lambda app, **kwargs: calls.update(kwargs))
+    server.main()
+    assert calls["host"] == "0.0.0.0"
+
+
 def test_solve_invalid_payload(client):
     r = client.post("/solve", json={"type": "image", "image": "not-an-image"})
     assert r.status_code == 200

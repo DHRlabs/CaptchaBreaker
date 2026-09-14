@@ -1,10 +1,7 @@
 """Configuration for CaptchaBreaker.
 
-CaptchaBreaker is fully local and offline: the OCR path needs no keys, no
-credentials, and no `.env` at all. Browser-level challenges (reCAPTCHA /
-hCaptcha / Turnstile checkboxes) are handled by the HumanPass module, which
-clicks through them behaviorally — no paid provider, no API key. The only
-runtime settings are the HTTP port and debug logging.
+The default OCR and HumanPass paths run locally without keys. HumanPass can
+optionally use an explicitly enabled external vision backend.
 """
 
 from __future__ import annotations
@@ -20,17 +17,20 @@ except ImportError:  # optional convenience
 
 
 DEFAULT_HTTP_PORT = 8977
+DEFAULT_HTTP_HOST = "127.0.0.1"
 
 
 @dataclass
 class Settings:
     port: int = DEFAULT_HTTP_PORT
     debug: bool = False
+    host: str = DEFAULT_HTTP_HOST
 
 
 def _load_settings() -> Settings:
     return Settings(
         port=int(os.getenv("CAPTCHABREAKER_PORT", str(DEFAULT_HTTP_PORT))),
+        host=os.getenv("CAPTCHABREAKER_HOST", DEFAULT_HTTP_HOST),
         debug=os.getenv("CAPTCHABREAKER_DEBUG", "").lower() in {"1", "true", "yes"},
     )
 

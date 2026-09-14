@@ -82,8 +82,8 @@ async def _unhandled(req, exc) -> JSONResponse:
 
 def main() -> None:
     import uvicorn
-    log.info("CaptchaBreaker serving on http://127.0.0.1:%d", settings.port)
-    uvicorn.run(app, host="127.0.0.1", port=settings.port, log_level="info")
+    log.info("CaptchaBreaker serving on http://%s:%d", settings.host, settings.port)
+    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 
 
 if __name__ == "__main__":

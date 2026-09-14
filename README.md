@@ -1,17 +1,17 @@
 # CaptchaBreaker
 
-A self-contained, **fully local and offline** CAPTCHA-solving service for LLM agents and programs that puppeteer browsers.
+A self-contained, local-first CAPTCHA-solving service for LLM agents and programs that puppeteer browsers.
 
-Your agents run into CAPTCHAs all day (job applications, signups, searches). CaptchaBreaker gives them **one local endpoint** they can call to get the answer — no Chrome extension surgery, no account juggling, and no paid provider or API key.
+Your agents run into CAPTCHAs all day (job applications, signups, searches). CaptchaBreaker gives them **one local endpoint** they can call to get the answer — no Chrome extension surgery or account juggling.
 
-It has **two local capabilities**, neither of which costs anything:
+It has two capabilities, with local behavior as the default:
 
 | Task | Backend | Cost | API key? |
 |---|---|---|---|
 | Image / text / math (distorted-text CAPTCHAs) | Local ONNX OCR engine (`RapidOCR`) | free | **no** — works offline |
-| reCAPTCHA v2/v3, hCaptcha, Turnstile checkboxes | HumanPass behavioral click-through | free | **no** |
+| reCAPTCHA v2/v3, hCaptcha, Turnstile checkboxes | HumanPass behavioral click-through | free locally | **no by default**; optional vision opt-in |
 
-There is no cloud provider to configure. Image CAPTCHAs are solved offline by OCR; browser-level "I am not a robot" widgets are cleared by HumanPass moving a real cursor like a person does.
+The default paths need no cloud provider. Image CAPTCHAs are solved offline by OCR; browser-level "I am not a robot" widgets are cleared by HumanPass moving a real cursor like a person does. An explicitly enabled external vision backend can handle image-grid challenges.
 
 ---
 
@@ -64,13 +64,20 @@ type the returned answer into the page.
 
 ## Configuration
 
-CaptchaBreaker needs **no configuration** to run. Copy `.env.example` → `.env` only
-if you want to change the server port or enable debug logging:
+CaptchaBreaker needs **no configuration** for its local defaults. Copy `.env.example` → `.env` only
+if you want to change the server bind, port, debug logging, or opt into external vision:
 
 | Env var | Purpose |
 |---|---|
+| `CAPTCHABREAKER_HOST` | server bind (default `127.0.0.1`; Docker uses `0.0.0.0` inside the container) |
 | `CAPTCHABREAKER_PORT` | local server port (default 8977) |
 | `CAPTCHABREAKER_DEBUG` | debug logging |
+| `VISION_ENABLED` | set to `1` to opt into external vision requests (off by default) |
+| `VISION_BASE_URL` / `VISION_API_KEY` / `VISION_MODEL` | optional vision endpoint, key, and model; used after opt-in |
+
+The `HumanPass` caller can override the environment with `vision=True` or
+`vision=False`. An explicit `vision=True` still requires a configured key; the
+`OPENAI_*` fallbacks are used only after that caller opt-in.
 
 ## Project layout
 
@@ -124,8 +131,9 @@ with CDPClient(find_ws_url_for("http://127.0.0.1:9222")) as cdp:
 
 Requires the `[browser]` extra (`pip install captchabreaker[browser]`), launches
 Chrome with `--remote-allow-origins=*`. Vision is optional and fully pluggable:
-set `VISION_BASE_URL` / `VISION_API_KEY` / `VISION_MODEL` to have it screenshot an
-image-grid challenge and click the correct tiles. Without vision it degrades to
+set `VISION_ENABLED=1` plus `VISION_BASE_URL` / `VISION_API_KEY` / `VISION_MODEL`
+to have it screenshot an image-grid challenge and click the correct tiles.
+Without vision it degrades to
 the silent behavioral checkbox path (which passes most v2/v3 challenges).
 
 Live demo (spawns its own headless Chrome, no interference with your scrapers):
@@ -157,11 +165,12 @@ Re-run the benchmark:
 
 ```bash
 docker build -t captchabreaker .
-docker run -p 8977:8977 captchabreaker          # or: docker compose up
+docker run -p 127.0.0.1:8977:8977 captchabreaker  # or: docker compose up
 ```
 
-The container exposes the HTTP API on port 8977 with a `/status` healthcheck. The
-OCR models are pre-fetched at image build time so the runtime works offline.
+The container listens on its interfaces while the published host port stays
+local-only. It exposes the HTTP API on port 8977 with a `/status` healthcheck.
+The OCR models are pre-fetched at image build time so the default runtime works offline.
 
 ## Run the tests
 

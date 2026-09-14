@@ -27,7 +27,8 @@ from captchabreaker.solvers.base import Solver, decode_image
 
 # RapidOCR's PaddleOCR backend is heavy to import; defer it.
 _engine = None
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "captcha_ocr_config.yaml")
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            "captcha_ocr_config.yaml")
 
 
 def _get_engine():
